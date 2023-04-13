@@ -12,17 +12,35 @@ clear
 config_lk;
 
 % x_t = [y, y_v, w, w_v]
-% 
+% y  : lateral position 
+% y_v: lateral velocity
+% w  : yaw angle
+% w_v: yaw velocity
+
+% assumption: 
+% constant longitudinal speed
+
+%%%%%%%%%% INITIAL CONDITION %%%%%%%%%%%
 x_0 = [5, 10, 0, 2]';
 % x_0 = [5, 6, 0, 2]';
+%%%%%%%%%% /INITIAL CONDITION %%%%%%%%%%%
 
-deltaT = 0.1;
 
-A = [0,1,0,0;
-    0, a_c1, 0, a_c2;
-    0, 0, 0, 1;
-    0, a_c3, 0, a_c4];
+%%%%%%%%%% STATE SPACE MODEL %%%%%%%%%%%
+A = [0, 1, 0, 0;
+     0, a_c1, 0, a_c2;
+     0, 0, 0, 1;
+     0, a_c3, 0, a_c4];
 B = [0; 2*C_alphaF/m; 0; 2*l_F*C_alphaF/I_z];
+
+% note that x_t_next = A * x_t + B * u_t
+
+%%%%%%%%%% /STATE SPACE MODEL %%%%%%%%%%%
+
+
+%%%%%%%%%% CONSTANTS %%%%%%%%%%%%
+deltaT = 0.1; % definition of 1 time step
+
 H = 61;  % H * 0.1 secs horizon
 
 alpha_value = 18;
@@ -30,26 +48,36 @@ beta_value = 25;
 % alpha_value = 15;
 % beta_value = 15;
 
-u_max = 0.72;
-du_max = 0.72;
+u_max = 0.72; % physical limit of the turning angle
+du_max = 0.72; % change rate of the input (angle)
 
-yl = -1;
-yu = 1;
+yl = -1; % lower bound of difference between the vehicle and center line of the lane
+yu = 1; % upper bound of difference between the vehicle and center line of the lane
 
 track_lambda = 30;
+%%%%%%%%%% /CONSTANTS %%%%%%%%%%%%
+
 %%
+%%%%%%%%%% SOLVER CONSTRAINTS %%%%%%%%%%%%
+
+% decision variable for the steering angle control 
 u = sdpvar(H-1,1);
 constraints = [];
+
+% steering angle (physical limit)
 for k = 1:H-1
-    constraints = [constraints; u(k) <= u_max; u(k)>=-u_max];
+     constraints = [constraints; u(k) <= u_max; u(k)>=-u_max];
 end
+
 % constrain the u change rate
 constraints = [constraints; u(1)<=0.5 ;u(1)>=-0.5];
 for k = 1:H-2
     constraints = [constraints; u(k+1)-u(k)>=-du_max; u(k+1)-u(k)<=du_max];
 end
 
+% decision variable for system states
 % sys state
+% note that x_t_next = A * x_t + B * u_t
 x_n = sdpvar(4,H); % with H number of points, signal length is H-1
 
 constraints = [constraints; x_n(:,1) == x_0];
@@ -66,28 +94,33 @@ end
 delta_x = v * deltaT;
 [y_upperbounds, y_lowerbounds] = sine_curvature(yl, yu, H, track_lambda, delta_x);
 
-z_p1 = sdpvar(H,1);
-z_p2 = sdpvar(H,1);
+z_p1 = sdpvar(H,1); % boolean variable for lateral_position >= y_lowerbounds
+z_p2 = sdpvar(H,1); % boolean variable for lateral_position <= y_upperbounds
+
 for i = 1:H
-[constr, z_p1(i)] = bool_mu(x_n(1,i)', 1, y_lowerbounds(i)); %  x>= y_lowerbounds
-constraints = [constraints;constr];
-[constr, z_p2(i)] = bool_mu(x_n(1,i)', -1, -y_upperbounds(i)); % x<= y_upperbounds
-constraints = [constraints;constr];
+    [constr, z_p1(i)] = bool_mu(x_n(1,i)', 1, y_lowerbounds(i)); %  x>= y_lowerbounds
+    constraints = [constraints;constr];
+    [constr, z_p2(i)] = bool_mu(x_n(1,i)', -1, -y_upperbounds(i)); % x<= y_upperbounds
+    constraints = [constraints;constr];
 end
 
+% constraint for the conjunction
 %  x>= y_lowerbounds and x<= y_upperbounds
 z_and = sdpvar(H,1);
 for j = 1:H
     [constr, z_and(j)] = bool_and([z_p1(j); z_p2(j)]);
     constraints = [constraints;constr];
 end
+
+% constraint for Always_[0,2]
 [constr, z_and_g] = bool_globally(z_and, 0, 2);
 constraints = [constraints;constr];
 
-
+% optimize for recoverability
 [constr, trec_value] = trec(z_and_g);
 constraints = [constraints;constr];
 
+% optimize for durability
 [constr, tdur_value] = tdur(z_and_g);
 constraints = [constraints;constr];
 
@@ -99,8 +132,10 @@ objective = -tdur_value(1);
 
 fprintf("Optimal Solutions for Figure 3 is:\n");
 disp(optimal_solution*deltaT);
-
+%%%%%%%%%% /SOLVER CONSTRAINTS %%%%%%%%%%%%
 %%
+
+%%%%%%%%%% VISUALIZATION %%%%%%%%%%%%
 % color = []
 xpos = -1.9;
 figure;
@@ -165,3 +200,4 @@ set(gcf,'PaperUnits','inches','PaperPosition',[0 0 7.4 6])
 saveas(gcf, '../results/Figure_3.png');
 close(gcf);
 % print('results/lane_keeping_trajectory','-dpng','-r300')
+%%%%%%%%%% /VISUALIZATION %%%%%%%%%%%%

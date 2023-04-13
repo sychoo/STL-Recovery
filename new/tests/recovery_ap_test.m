@@ -1,0 +1,52 @@
+% test simple encoding of atomic proposition x >= 2
+% predict future 10 steps
+% bound the range of each of the state variable between -10 ~ 10
+% given an objective to maximize the cumulative robustness
+% predict the states: calculate the states
+% 
+% expected result: 
+% state list 10....10        (upperbound is chosen)
+% satisfaction list 1...1    (all are satisfied)
+% robustness list 8.0...8.0  (calculated using 10 - 2)
+
+clear;
+yalmip('clear');
+
+state_list = sdpvar(10, 1); % inputs, with 10 step time horizon
+
+% atomic proposition
+% constraints and z_t for STL predicate 1 * x >= 2
+% x >= 2
+% x - 2 >= 0
+% note that y(:,1) obtains the first column of y
+[constraints, recoverability, sat_list, robust_list] = recovery_ap(state_list(:,1), 1, 2);
+
+Constraints = [];
+Constraints = [Constraints; constraints];
+
+% bound x between -10 ~ 10
+for k=1:10
+    Constraints = [Constraints; state_list(k) >= -10; state_list(k) <= 10];
+end 
+
+Constraints = [Constraints; state_list(1) == -10]
+% note that objective function is minimized
+Objective = -1 * sum(robust_list);
+
+options = sdpsettings('verbose',0,'solver','gurobi','quadprog.maxiter',100);
+optimize(Constraints, Objective, options);
+
+disp("state list");
+disp(value(state_list));
+
+disp("satisfaction list");
+disp(value(sat_list));
+
+disp("robustess list");
+disp(value(robust_list));
+v = value(robust_list);
+% disp(v(1));
+
+disp("recoverability");
+disp(value(recoverability))
+%% TODO: change the optimization function to cumulative robustness
